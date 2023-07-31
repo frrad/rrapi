@@ -4,7 +4,7 @@ from tornado import (
     httpclient,
 )  # for asynchronous ioloops for downloading chapters
 from datetime import datetime  # for timestamping epubs
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 import re  # for regex operations to clean up information
 import os  # to delete and create and modify files and folders
 import uuid  # to give each epub a unique identifier
@@ -38,9 +38,7 @@ file_name_chapter_range = ""  # to have a default empty chapter range expression
 
 
 # download a fiction by id or search
-def get_fiction(
-    fiction_id: int, directory="Fictions/", start_chapter="first", end_chapter="last"
-):
+def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter: int):
     global epub_index_start, file_name_chapter_range, final_location, plural
 
     fiction_object = get_fiction_object(fiction_id)
@@ -820,43 +818,59 @@ def request_soup(url: str) -> Optional[BeautifulSoup]:
         return None
 
 
-def get_fiction_info(
-    fiction_obj,
-):  # get fiction info and return and set global variables
-    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount  # access global variables
-    if fiction_obj:  # if the fiction_obj is not empty
-        fiction_id = get_fiction_id(fiction_obj)  # get the fiction id
-        url = "https://www.royalroad.com/fiction/" + str(fiction_id)  # get the url
-        title = get_fiction_title(fiction_obj)  # get the title
-        cover_image = get_fiction_cover_image(
-            fiction_obj
-        )  # get the cover_image address
-        author = get_fiction_author(fiction_obj)  # get the author
-        description = get_fiction_description(fiction_obj)  # get the description
-        genres = get_fiction_genres(fiction_obj)  # get the genres
-        ratings = get_fiction_rating(fiction_obj)  # get the ratings
-        stats = get_fiction_statistics(fiction_obj)  # get the stats
-        chapter_links = get_chapter_links(fiction_obj)  # get the chapter_links
-        chapter_amount = len(chapter_links)  # get the chapter amount
-        return (
-            url,
-            title,
-            cover_image,
-            author,
-            description,
-            genres,
-            ratings,
-            stats,
-            chapter_links,
-            chapter_amount,
-        )  # return all the info
+def get_fiction_info(fiction_obj: BeautifulSoup):
+    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount
+
+    fiction_id = get_fiction_id(fiction_obj)
+    print(fiction_id)
+
+    url = "https://www.royalroad.com/fiction/" + str(fiction_id)
+    title = get_fiction_title(fiction_obj)
+    cover_image = get_fiction_cover_image(fiction_obj)
+    author = get_fiction_author(fiction_obj)
+    description = get_fiction_description(fiction_obj)
+    genres = get_fiction_genres(fiction_obj)
+    ratings = get_fiction_rating(fiction_obj)
+    stats = get_fiction_statistics(fiction_obj)
+    chapter_links = get_chapter_links(fiction_obj)
+    chapter_amount = len(chapter_links)
+    return (
+        url,
+        title,
+        cover_image,
+        author,
+        description,
+        genres,
+        ratings,
+        stats,
+        chapter_links,
+        chapter_amount,
+    )
 
 
-def get_fiction_id(soup):  # get the fiction
-    fiction_id = soup.find("input", attrs={"name": "id"}).get(
-        "value"
-    )  # collect the fiction id
-    return fiction_id  # return the fiction id
+def get_fiction_id(fic_page_soup: BeautifulSoup) -> int:
+    # <link href="https://www.royalroad.com/fiction/1234/fic-name" rel="canonical"/>
+    input_elt = fic_page_soup.find("link", attrs={"rel": "canonical"})
+    assert input_elt is not None
+
+    # https://www.royalroad.com/fiction/1234/fic-name
+    link_text = cast(str, input_elt.get("href"))
+
+    prefix = "https://www.royalroad.com/fiction/"
+    assert len(link_text) >= len(prefix), link_text
+
+    link_text_suffix = link_text[len(prefix) :]
+    slash_ix = link_text_suffix.find("/")
+
+    assert slash_ix >= 0, link_text
+    fiction_id = link_text_suffix[:slash_ix]
+
+    try:
+        int(fiction_id)
+    except:
+        assert False, fiction_id
+
+    return int(fiction_id)
 
 
 def check_active_fiction(soup: BeautifulSoup, fiction_id) -> Optional[bool]:
@@ -867,17 +881,19 @@ def check_active_fiction(soup: BeautifulSoup, fiction_id) -> Optional[bool]:
     return None
 
 
-def get_fiction_title(soup):  # get the title of the fiction
-    title = soup.find(
-        "h1", attrs={"property": "name"}
-    ).text.strip()  # collect title and strip whitespace
-    return title  # return title
+def get_fiction_title(soup: BeautifulSoup) -> str:
+    name_elt = soup.find("h1", attrs={"property": "name"})
+    if name_elt is None:
+        return None
+    return name_elt.text.strip()
+    return title
 
 
-def get_fiction_cover_image(soup):  # get the cover image source
-    cover_image = soup.find("img", attrs={"property": "image"}).get(
-        "src"
-    )  # get the source
+def get_fiction_cover_image(soup: BeautifulSoup) -> Optional[str]:
+    image_elt = soup.find("img", attrs={"property": "image"})
+    if image_elt is None:
+        return None
+    cover_image = image_elt.get("src")
     if (
         cover_image.lower() == "/content/images/nocover-new-min.png"
         or cover_image.lower() == "undefined"
@@ -886,22 +902,22 @@ def get_fiction_cover_image(soup):  # get the cover image source
     return cover_image  # return the image source
 
 
-def get_fiction_author(soup):  # get the author
-    author = soup.find(
-        "span", attrs={"property": "name"}
-    ).text.strip()  # collect and strip the author name
-    if author == "":  # if the author is empty
-        author = "NONE"  # change their name to none
-    return author  # return author
+def get_fiction_author(soup: BeautifulSoup) -> Optional[str]:
+    author_elt = soup.find("span", attrs={"property": "name"})
+    if author_elt is None:
+        return None
+
+    author = author_elt.text.strip()
+    if author == "":
+        author = "NONE"
+    return author
 
 
-def get_fiction_description(soup):  # get the description
-    description = soup.find(
-        "div", attrs={"property": "description"}
-    ).text.strip()  # collect the description and strip whitespace
-    if description == "":  # if the description is empty
-        description = "No Description"  # change description to a message stating there is no description
-    return description  # return the description
+def get_fiction_description(soup):
+    description = soup.find("div", attrs={"class": "description"}).text.strip()
+    if description == "":
+        description = "No Description"
+    return description
 
 
 def get_fiction_genres(soup):  # get fiction genres
@@ -919,42 +935,14 @@ def get_fiction_genres(soup):  # get fiction genres
     return genres  # return the genres
 
 
-def get_fiction_rating(soup):  # get the fiction ratings
-    overall_rating = soup.find("meta", attrs={"property": "ratingValue"}).get(
+def get_fiction_rating(soup):
+    rating_value = soup.find("meta", attrs={"property": "books:rating:value"}).get(
         "content"
-    )  # get overall rating
-    best_rating = soup.find("meta", attrs={"property": "bestRating"}).get(
+    )
+    rating_scale = soup.find("meta", attrs={"property": "books:rating:scale"}).get(
         "content"
-    )  # get best rating
-    rating_count = soup.find("meta", attrs={"property": "ratingCount"}).get(
-        "content"
-    )  # get rating count
-    style_rating = soup.find("span", attrs={"data-original-title": "Style Score"}).get(
-        "data-content"
-    )  # get style rating
-    story_rating = soup.find("span", attrs={"data-original-title": "Story Score"}).get(
-        "data-content"
-    )  # get story rating
-    character_rating = soup.find(
-        "span", attrs={"data-original-title": "Character Score"}
-    ).get(
-        "data-content"
-    )  # get character rating
-    grammar_rating = soup.find(
-        "span", attrs={"data-original-title": "Grammar Score"}
-    ).get(
-        "data-content"
-    )  # get grammar rating
-    rating = [
-        overall_rating,
-        best_rating,
-        rating_count,
-        style_rating,
-        story_rating,
-        character_rating,
-        grammar_rating,
-    ]  # collate all the ratings
-    return rating  # return ratings
+    )
+    return [rating_value, rating_scale]
 
 
 def get_fiction_statistics(soup):  # get fiction statistics
