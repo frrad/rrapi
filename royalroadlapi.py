@@ -1,20 +1,26 @@
-from bs4 import BeautifulSoup  # for processing html for info
+import asyncio
+from bs4 import BeautifulSoup
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from shutil import rmtree
 from tornado import (
     ioloop,
     httpclient,
-)  # for asynchronous ioloops for downloading chapters
-from datetime import datetime  # for timestamping epubs
+)
+from tornado.httpclient import (
+    HTTPResponse,
+)
+from tornado.concurrent import (
+    Future,
+)
 from typing import Optional, Tuple, List, cast, Dict
-import re  # for regex operations to clean up information
-import os  # to delete and create and modify files and folders
-import uuid  # to give each epub a unique identifier
-from shutil import rmtree  # to create archives and delete files
-import zipfile  # to create archives
-import base64  # to encode and decode base64 data (like images)
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import base64
+import os
+import re
 import time
-
+import uuid
+import zipfile
 
 import sys, asyncio
 
@@ -27,34 +33,26 @@ if (
 
 i = 0  # to track the ioloop
 chapters_downloaded = []
-chapters_html = (
-    {}
-)  # the dictionary containing all the downloaded chapter ids with their respective html
-fiction_html = ""  # the html of the entire fiction in one variable
-directory = "Error/"  # to have a fallback directory in case of errors
-epub_index_start = 1  # to ensure the epub index starts at 1
-file_name_chapter_range = ""  # to have a default empty chapter range expression
+chapters_html = {}
+fiction_html = ""
+directory = "Error/"
+epub_index_start = 1
+file_name_chapter_range = ""
 
 
-# download a fiction by id or search
 def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter: int):
     global epub_index_start, file_name_chapter_range, final_location, plural
 
-    fiction_object = get_fiction_object(fiction_id)
-    get_fiction_info(fiction_object)
+    my_fic = fic(fiction_id)
 
     # clarify and validate the chapter range
     start_chapter, end_chapter, epub_index_start = get_chapter_range(
         start_chapter, end_chapter
     )
-    chapter_links_approved = chapter_links[
-        start_chapter:end_chapter
-    ]  # remove excess chapters outside the range from the queue
-    if chapter_links_approved != []:  # if any chapter links remain
-        downloading_chapter_amount = len(chapter_links_approved)  # count them
-        chapter_amount = len(
-            chapter_links
-        )  # count how many there would have been in total
+    chapter_links_approved = my_fic.chapter_links[start_chapter:end_chapter]
+    if chapter_links_approved != []:
+        downloading_chapter_amount = len(chapter_links_approved)
+        chapter_amount = len(my_fic.chapter_links)
         (
             start_chapter,
             end_chapter,
@@ -69,8 +67,8 @@ def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter
             epub_index_start,
             chapter_amount,
             downloading_chapter_amount,
-        )  # generate a string that represents the chapter range specified
-        if file_name_chapter_range != "":  # if the string is not empty
+        )
+        if file_name_chapter_range != "":
             downloading_chapter_str = (
                 "chapter"
                 + plural
@@ -79,8 +77,8 @@ def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter
                 + str(downloading_chapter_amount)
                 + "/"
                 + str(chapter_amount)
-            )  # add it to the downloading str
-        elif chapter_amount != 1:  # if there is more than one chapter
+            )
+        elif chapter_amount != 1:
             downloading_chapter_str = (
                 "chapter"
                 + plural
@@ -91,8 +89,8 @@ def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter
                 + str(downloading_chapter_amount)
                 + "/"
                 + str(chapter_amount)
-            )  # if it's empty, specify that you are downloading everything
-        else:  # if the fiction is only one chapter long
+            )
+        else:
             downloading_chapter_str = (
                 "chapter"
                 + plural
@@ -103,24 +101,14 @@ def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter
                 + str(chapter_amount)
             )  # only show one chapter in the download string
         print(
-            "Downloading ID {} ({}".format(fiction_id, downloading_chapter_str)
-            + ") ID {}: ".format(fiction_id)
-            + title
-            + " - "
-            + author
-            + file_name_chapter_range
-            + ".epub"
-        )  # print downloading alert to the console
-        get_chapters(
-            chapter_links_approved, directory
-        )  # perform download of chapters in the range
-        return final_location  # return the final location it was saved at
-    else:  # there are no chapters left to download
-        if chapter_links == []:  # there was none to begin with
-            print(
-                "Downloading ID {}: Fiction contains no chapters.".format(fiction_id)
-            )  # alert the user that the fiction has no chapters
-        else:  # there was some to begin with
+            f"Downloading ID {fiction_id} ({downloading_chapter_str}) ID {fiction_id}: {my_fic.title} - {my_fic.author} {file_name_chapter_range}.epub"
+        )
+        asyncio.run(get_chapters(chapter_links_approved, directory))
+        return final_location
+    else:
+        if chapter_links == []:
+            print("Downloading ID {}: Fiction contains no chapters.".format(fiction_id))
+        else:
             print(
                 "Downloading ID {}: Fiction contains no chapters in the given range".format(
                     fiction_id
@@ -834,6 +822,40 @@ class fic:
         self._fic_page_soup = get_fiction_object(fiction_id)
         self._get_fiction_info()
 
+    @staticmethod
+    def _get_fiction_cover_image(soup: BeautifulSoup) -> str:
+        image_elt = soup.find("meta", attrs={"property": "og:image"})
+        assert image_elt is not None
+        cover_image = image_elt.get("content")
+        cover_image = cast(str, cover_image)
+
+        if (
+            cover_image.lower() == "/content/images/nocover-new-min.png"
+            or cover_image.lower() == "undefined"
+        ):
+            cover_image = "http://www.royalroad.com/Content/Images/nocover-new-min.png"
+        return cover_image
+
+    @staticmethod
+    def _get_fiction_title(soup: BeautifulSoup) -> str:
+        title_elt = soup.find("meta", attrs={"name": "twitter:title"})
+        assert title_elt is not None, soup
+
+        title = title_elt.get("content")
+        title = cast(str, title)
+
+        return title
+
+    @staticmethod
+    def _get_fiction_author(soup: BeautifulSoup) -> str:
+        author_elt = soup.find("meta", attrs={"property": "books:author"})
+        assert author_elt is not None
+
+        author = author_elt.get("content")
+        author = cast(str, author)
+
+        return author
+
     def _get_fiction_info(self):
         assert self._fic_page_soup is not None
         fiction_obj = self._fic_page_soup
@@ -844,9 +866,9 @@ class fic:
         print(fiction_id)
 
         self.url = "https://www.royalroad.com/fiction/" + str(fiction_id)
-        self.title = get_fiction_title(fiction_obj)
-        self.cover_image = get_fiction_cover_image(fiction_obj)
-        self.author = get_fiction_author(fiction_obj)
+        self.title = self._get_fiction_title(fiction_obj)
+        self.cover_image = self._get_fiction_cover_image(fiction_obj)
+        self.author = self._get_fiction_author(fiction_obj)
         self.description = get_fiction_description(fiction_obj)
         self.genres = get_fiction_genres(fiction_obj)
         self.ratings = get_fiction_rating(fiction_obj)
@@ -898,38 +920,6 @@ def check_active_fiction(soup: BeautifulSoup, fiction_id) -> Optional[bool]:
         return True
     print(f"No Fiction with ID {fiction_id}")
     return None
-
-
-def get_fiction_title(soup: BeautifulSoup) -> str:
-    name_elt = soup.find("h1", attrs={"property": "name"})
-    if name_elt is None:
-        return None
-    return name_elt.text.strip()
-    return title
-
-
-def get_fiction_cover_image(soup: BeautifulSoup) -> str:
-    image_elt = soup.find("img", attrs={"property": "image"})
-    assert image_elt is not None
-    cover_image = image_elt.get("src")
-    cover_image = cast(str, cover_image)
-
-    if (
-        cover_image.lower() == "/content/images/nocover-new-min.png"
-        or cover_image.lower() == "undefined"
-    ):
-        cover_image = "http://www.royalroad.com/Content/Images/nocover-new-min.png"
-    return cover_image
-
-
-def get_fiction_author(soup: BeautifulSoup) -> str:
-    author_elt = soup.find("span", attrs={"property": "name"})
-    assert author_elt is not None
-
-    author = author_elt.text.strip()
-    if author == "":
-        author = "NONE"
-    return author
 
 
 def get_fiction_description(soup):
@@ -991,36 +981,34 @@ def get_chapter_amount(soup):  # get chapter amount
     return chapter_amount  # return chapter amount
 
 
-def get_chapters(
-    chapter_links, directory_loc="Fictions/"
-):  # create a loop object with the chapter links, then download them and finally save them to the hdd
-    global chapters_downloaded, chapters_html, fiction_html, directory, http_client  # get global variables
-    globals()[
-        "directory"
-    ] = directory_loc  # Sets the global variable directory to the variable directory_loc, might not be necessary now
-    chapters_downloaded = []  # reset the downloaded chapters
-    chapters_html = {}  # reset the chapter list and html
-    fiction_html = ""  # reset the fiction html
-    http_client = httpclient.AsyncHTTPClient(
-        force_instance=True, max_clients=100
-    )  # initiate the async http loop
-    for chapter_id in chapter_links:  # for each chapter in chapter links
-        global i  # access the global variable i
-        i += 1  # add one to it
-        url = "https://www.royalroad.com" + str(chapter_id)  # construct the url
-        http_client.fetch(
-            url.strip(),
-            handle_chapter_response,
-            method="GET",
-            connect_timeout=10000,
-            request_timeout=10000,
-            headers=headers,
-        )  # add the url to the event loop
-    if chapter_links != []:  # if there are links in the loop
-        ioloop.IOLoop.instance().start()  # start the download
-        save_to_hdd(
-            fiction_html, chapters_html, chapters_downloaded, directory
-        )  # when the download is finished, save the files
+async def get_chapters(chapter_links: List[str], directory_loc: str):
+    global chapters_downloaded, chapters_html, fiction_html, directory, http_client
+    globals()["directory"] = directory_loc
+    chapters_downloaded = []
+    chapters_html = {}
+    fiction_html = ""
+    http_client = httpclient.AsyncHTTPClient(force_instance=True, max_clients=100)
+    chapter_futures: List[Future[HTTPResponse]] = []
+    for chapter_id in chapter_links:
+        global i
+        i += 1
+        url = "https://www.royalroad.com" + str(chapter_id)
+        print(url)
+        chapter_futures.append(
+            http_client.fetch(
+                url.strip(),
+                True,
+                method="GET",
+                connect_timeout=10000,
+                request_timeout=10000,
+            )
+        )
+
+    for chap in chapter_futures:
+        resp = await chap
+        handle_chapter_response(resp)
+
+    save_to_hdd(fiction_html, chapters_html, chapters_downloaded, directory)
 
 
 def get_chapter_content(html):  # get the chapter html from the chapter page
@@ -1042,20 +1030,16 @@ def get_chapter_content(html):  # get the chapter html from the chapter page
 
 def save_to_hdd(
     fiction_html, chapters_html, chapters_downloaded, directory="Fictions/"
-):  # convert the chapter html and fiction info to an epub and save it locally
-    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount, epub_index_start, file_name_chapter_range, plural  # access global variable info
-    time = datetime.now().strftime(
-        "%Y-%m-%d %H:%M"
-    )  # create a timestamp for the epub info
-    genre_html = ""  # declare genre_html
-    for genre in genres:  # for each genre
-        if genre_html == "":  # check if the string is empty
-            genre_html += genre  # if so, add the genre to it
-        else:  # if not empty
-            genre_html += (
-                " | " + genre
-            )  # add a fancy separator and the genre to the end
-    if file_name_chapter_range != "":  # if the chapter range is not default
+):
+    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount, epub_index_start, file_name_chapter_range, plural
+    time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    genre_html = ""
+    for genre in genres:
+        if genre_html == "":
+            genre_html += genre
+        else:
+            genre_html += " | " + genre
+    if file_name_chapter_range != "":
         chapter_range_text = f"{plural} {file_name_chapter_range}"  # specify the chapters contained in the epub
     elif chapter_amount != 1:  # else
         chapter_range_text = (
@@ -1638,7 +1622,7 @@ def cloud_flare_bypass():
     return headers
 
 
-def handle_chapter_response(response):  # asynchronously handle the chapter responses
+def handle_chapter_response(response):
     global i, chapters_downloaded, chapters_html, fiction_html, directory, http_client  # access global variables
     if response.code == 599:  # if the request failed (timeout or 404)
         print(response.effective_url, "error")  # print an error to the console
