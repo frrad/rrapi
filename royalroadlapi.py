@@ -4,14 +4,13 @@ from tornado import (
     httpclient,
 )  # for asynchronous ioloops for downloading chapters
 from datetime import datetime  # for timestamping epubs
-from typing import Optional, Tuple, cast
+from typing import Optional, Tuple, List, cast, Dict
 import re  # for regex operations to clean up information
 import os  # to delete and create and modify files and folders
 import uuid  # to give each epub a unique identifier
 from shutil import rmtree  # to create archives and delete files
 import zipfile  # to create archives
 import base64  # to encode and decode base64 data (like images)
-import selenium
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import time
@@ -779,7 +778,7 @@ def determine_file_location(
     return final_location  # return the final location
 
 
-def get_fiction_object(fiction_id: int) -> Optional[BeautifulSoup]:
+def get_fiction_object(fiction_id: int) -> BeautifulSoup:
     global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount
     (
         url,
@@ -795,13 +794,12 @@ def get_fiction_object(fiction_id: int) -> Optional[BeautifulSoup]:
     ) = [None for i in range(10)]
     url = "https://www.royalroad.com/fiction/" + str(fiction_id)
     soup = request_soup(url)
-    if soup is None:
-        return None
+    assert soup is not None
+
     active = check_active_fiction(soup, fiction_id)
-    if active:
-        return soup
-    else:
-        return None
+    assert active
+
+    return soup
 
 
 def request_soup(url: str) -> Optional[BeautifulSoup]:
@@ -818,34 +816,55 @@ def request_soup(url: str) -> Optional[BeautifulSoup]:
         return None
 
 
-def get_fiction_info(fiction_obj: BeautifulSoup):
-    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount
+class fic:
+    url: str
+    title: str
+    cover_image: str
+    author: str
+    description: str
+    genres: List[str]
+    ratings: float
+    stats: Dict[str, str]
+    chapter_links: List[str]
+    num_chapters: int
 
-    fiction_id = get_fiction_id(fiction_obj)
-    print(fiction_id)
+    _fic_page_soup: BeautifulSoup
 
-    url = "https://www.royalroad.com/fiction/" + str(fiction_id)
-    title = get_fiction_title(fiction_obj)
-    cover_image = get_fiction_cover_image(fiction_obj)
-    author = get_fiction_author(fiction_obj)
-    description = get_fiction_description(fiction_obj)
-    genres = get_fiction_genres(fiction_obj)
-    ratings = get_fiction_rating(fiction_obj)
-    stats = get_fiction_statistics(fiction_obj)
-    chapter_links = get_chapter_links(fiction_obj)
-    chapter_amount = len(chapter_links)
-    return (
-        url,
-        title,
-        cover_image,
-        author,
-        description,
-        genres,
-        ratings,
-        stats,
-        chapter_links,
-        chapter_amount,
-    )
+    def __init__(self, fiction_id) -> None:
+        self._fic_page_soup = get_fiction_object(fiction_id)
+        self._get_fiction_info()
+
+    def _get_fiction_info(self):
+        assert self._fic_page_soup is not None
+        fiction_obj = self._fic_page_soup
+
+        global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount
+
+        fiction_id = get_fiction_id(fiction_obj)
+        print(fiction_id)
+
+        self.url = "https://www.royalroad.com/fiction/" + str(fiction_id)
+        self.title = get_fiction_title(fiction_obj)
+        self.cover_image = get_fiction_cover_image(fiction_obj)
+        self.author = get_fiction_author(fiction_obj)
+        self.description = get_fiction_description(fiction_obj)
+        self.genres = get_fiction_genres(fiction_obj)
+        self.ratings = get_fiction_rating(fiction_obj)
+        self.stats = get_fiction_statistics(fiction_obj)
+        self.chapter_links = get_chapter_links(fiction_obj)
+        self.num_chapters = len(self.chapter_links)
+        return (
+            self.url,
+            self.title,
+            self.cover_image,
+            self.author,
+            self.description,
+            self.genres,
+            self.ratings,
+            self.stats,
+            self.chapter_links,
+            self.num_chapters,
+        )
 
 
 def get_fiction_id(fic_page_soup: BeautifulSoup) -> int:
@@ -889,23 +908,23 @@ def get_fiction_title(soup: BeautifulSoup) -> str:
     return title
 
 
-def get_fiction_cover_image(soup: BeautifulSoup) -> Optional[str]:
+def get_fiction_cover_image(soup: BeautifulSoup) -> str:
     image_elt = soup.find("img", attrs={"property": "image"})
-    if image_elt is None:
-        return None
+    assert image_elt is not None
     cover_image = image_elt.get("src")
+    cover_image = cast(str, cover_image)
+
     if (
         cover_image.lower() == "/content/images/nocover-new-min.png"
         or cover_image.lower() == "undefined"
-    ):  # "/content/images/rr-placeholder.jpg" or cover_image == "undefined": #if the source refers to the default internal source or if the source is a string containing undefined
-        cover_image = "http://www.royalroad.com/Content/Images/nocover-new-min.png"  # convert it to an external source
-    return cover_image  # return the image source
+    ):
+        cover_image = "http://www.royalroad.com/Content/Images/nocover-new-min.png"
+    return cover_image
 
 
-def get_fiction_author(soup: BeautifulSoup) -> Optional[str]:
+def get_fiction_author(soup: BeautifulSoup) -> str:
     author_elt = soup.find("span", attrs={"property": "name"})
-    if author_elt is None:
-        return None
+    assert author_elt is not None
 
     author = author_elt.text.strip()
     if author == "":
@@ -920,32 +939,32 @@ def get_fiction_description(soup):
     return description
 
 
-def get_fiction_genres(soup):  # get fiction genres
-    genres = []  # declare the genres variable
+def get_fiction_genres(soup) -> List[str]:
+    genres = []
     genre_tags_part1 = soup.findAll(
         "span", attrs={"class": "label label-default label-sm bg-blue-hoki"}
-    )  # get the main genre tags
-    genre_tags_part2 = soup.findAll(
-        "span", attrs={"property": "genre"}
-    )  # get the secondary genre tags
-    for tag in genre_tags_part1:  # for genre in main genres
-        genres.append(tag.text.strip())  # collect the genre
-    for tag in genre_tags_part2:  # for genre in secondary genres
-        genres.append(tag.text.strip())  # collect the genre
-    return genres  # return the genres
+    )
+    genre_tags_part2 = soup.findAll("span", attrs={"property": "genre"})
+    for tag in genre_tags_part1:
+        genres.append(tag.text.strip())
+    for tag in genre_tags_part2:
+        genres.append(tag.text.strip())
+    return genres
 
 
-def get_fiction_rating(soup):
+def get_fiction_rating(soup) -> float:
     rating_value = soup.find("meta", attrs={"property": "books:rating:value"}).get(
         "content"
     )
     rating_scale = soup.find("meta", attrs={"property": "books:rating:scale"}).get(
         "content"
     )
-    return [rating_value, rating_scale]
+    assert rating_scale == "5"
+
+    return float(rating_value)
 
 
-def get_fiction_statistics(soup):  # get fiction statistics
+def get_fiction_statistics(soup) -> Dict[str, str]:
     stats = [
         stat.text.strip()
         for stat in soup.findAll(
@@ -957,12 +976,12 @@ def get_fiction_statistics(soup):  # get fiction statistics
     return stats  # return stats
 
 
-def get_chapter_links(soup):  # get chapter links
+def get_chapter_links(soup) -> List[str]:
     chapter_links = [
         tag.get("data-url")
         for tag in soup.findAll("tr", attrs={"style": "cursor: pointer"})
-    ]  # collect the url tags and then add the url to the chapter_links list
-    return chapter_links  # return the chapter links
+    ]
+    return chapter_links
 
 
 def get_chapter_amount(soup):  # get chapter amount
