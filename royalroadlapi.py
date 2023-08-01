@@ -1,4 +1,4 @@
-import asyncio
+from http import client
 from bs4 import BeautifulSoup
 from datetime import datetime
 from selenium import webdriver
@@ -9,6 +9,7 @@ from tornado import (
     httpclient,
 )
 from tornado.httpclient import (
+    HTTPClient,
     HTTPResponse,
 )
 from tornado.concurrent import (
@@ -22,14 +23,6 @@ import time
 import uuid
 import zipfile
 
-import sys, asyncio
-
-if (
-    sys.version_info[0] == 3
-    and sys.version_info[1] >= 8
-    and sys.platform.startswith("win")
-):
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 i = 0  # to track the ioloop
 chapters_downloaded = []
@@ -38,83 +31,6 @@ fiction_html = ""
 directory = "Error/"
 epub_index_start = 1
 file_name_chapter_range = ""
-
-
-def get_fiction(fiction_id: int, directory: str, start_chapter: int, end_chapter: int):
-    global epub_index_start, file_name_chapter_range, final_location, plural
-
-    my_fic = fic(fiction_id)
-
-    # clarify and validate the chapter range
-    start_chapter, end_chapter, epub_index_start = get_chapter_range(
-        start_chapter, end_chapter
-    )
-    chapter_links_approved = my_fic.chapter_links[start_chapter:end_chapter]
-    if chapter_links_approved != []:
-        downloading_chapter_amount = len(chapter_links_approved)
-        chapter_amount = len(my_fic.chapter_links)
-        (
-            start_chapter,
-            end_chapter,
-            epub_index_start,
-            chapter_amount,
-            downloading_chapter_amount,
-            file_name_chapter_range,
-            plural,
-        ) = chapter_range_string_expressions(
-            start_chapter,
-            end_chapter,
-            epub_index_start,
-            chapter_amount,
-            downloading_chapter_amount,
-        )
-        if file_name_chapter_range != "":
-            downloading_chapter_str = (
-                "chapter"
-                + plural
-                + file_name_chapter_range
-                + ", "
-                + str(downloading_chapter_amount)
-                + "/"
-                + str(chapter_amount)
-            )
-        elif chapter_amount != 1:
-            downloading_chapter_str = (
-                "chapter"
-                + plural
-                + " "
-                + "1-"
-                + str(chapter_amount)
-                + ", "
-                + str(downloading_chapter_amount)
-                + "/"
-                + str(chapter_amount)
-            )
-        else:
-            downloading_chapter_str = (
-                "chapter"
-                + plural
-                + " "
-                + "1, "
-                + str(downloading_chapter_amount)
-                + "/"
-                + str(chapter_amount)
-            )  # only show one chapter in the download string
-        print(
-            f"Downloading ID {fiction_id} ({downloading_chapter_str}) ID {fiction_id}: {my_fic.title} - {my_fic.author} {file_name_chapter_range}.epub"
-        )
-        asyncio.run(get_chapters(chapter_links_approved, directory))
-        return final_location
-    else:
-        if chapter_links == []:
-            print("Downloading ID {}: Fiction contains no chapters.".format(fiction_id))
-        else:
-            print(
-                "Downloading ID {}: Fiction contains no chapters in the given range".format(
-                    fiction_id
-                ),
-                str(epub_index_start) + "-" + str(end_chapter) + ".",
-            )  # alert the user that the fiction has no chapters in that range
 
 
 def get_fictions(
@@ -195,85 +111,7 @@ def get_fictions_from_list(
         print("Program Complete.")  # the multidownload has failed or completed
 
 
-def get_user_data(user_id):  # returns general user data
-    user_id = get_user_id(user_id)
-    try:
-        url = "https://www.royalroad.com/profile/" + str(user_id)
-        soup = request_soup(url)
-        favorite_fictions = soup.findAll("span", attrs={"class": "stat-value"})[
-            1
-        ].text.strip()
-        ratings = soup.findAll("span", attrs={"class": "stat-value"})[2].text.strip()
-        data = soup.find("tbody").findAll("td")
-        join_date = [data[0].text.strip(), data[0].find("time").get("unixtime").strip()]
-        last_active = [
-            data[1].text.strip(),
-            data[1].find("time").get("unixtime").strip(),
-        ]
-        gender = data[2].text.strip()
-        location = data[3].text.strip()
-        bio = data[4].text.strip()
-        data2 = soup.findAll("tbody")[1].findAll("td")
-        fiction_amount = data2[0].text.strip().replace(",", "")
-        total_words = data2[1].text.strip().replace(",", "")
-        total_reviews_recieved = data2[2].text.strip().replace(",", "")
-        followers = data2[3].text.strip().replace(",", "")
-        favorites_recieved = data2[4].text.strip().replace(",", "")
-        data = [
-            join_date,
-            last_active,
-            gender,
-            location,
-            bio,
-            fiction_amount,
-            total_words,
-            total_reviews_recieved,
-            followers,
-            favorites_recieved,
-            ratings,
-            favorite_fictions,
-        ]
-        return data
-    except:
-        print("Invalid User ID/Name Input (or profile).")
-
-
-def get_user_achievements(user_id):  # returns user achievements
-    user_id = get_user_id(user_id)
-    try:
-        url = "https://www.royalroad.com/profile/" + str(user_id) + "/achievements"
-        soup = request_soup(url)
-        achievements = []
-        achievement_listings = soup.find(
-            "div", attrs={"class": "portlet-body achievements"}
-        ).findAll("div", attrs={"class": "well achievement-well"})
-        for achievement_listing in achievement_listings:
-            title = (
-                achievement_listing.text.strip()
-                .split("\n")[0]
-                .strip()
-                .split(" (")[0]
-                .strip("")
-            )
-            try:
-                level_rn = (
-                    achievement_listing.text.strip()
-                    .split("\n")[0]
-                    .strip()
-                    .split(" (")[-1]
-                    .strip(")")
-                )
-                level = rn_to_int(level_rn)
-            except:
-                level = 1
-            description = achievement_listing.text.split("\n")[2].strip()
-            achievements.append([title, level, description])
-        return achievements
-    except:
-        print("Invalid User ID/Name Input (or profile).")
-
-
-def rn_to_int(rn):  # resolve the roman numberals in achievement titles to integers
+def rn_to_int(rn):
     try:
         symbols = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
         num = 0
@@ -296,31 +134,8 @@ def rn_to_int(rn):  # resolve the roman numberals in achievement titles to integ
     return num
 
 
-# move below functions into external file
-
-
-def get_user_fictions(user_id):  # returns user fictions
-    user_id = get_user_id(user_id)
-    try:
-        url = "https://www.royalroad.com/profile/" + str(user_id) + "/fictions"
-        fictions = get_fictions_from_url(url)
-        return fictions
-    except:
-        print("Invalid User ID/Name Input (or profile).")
-
-
-def get_user_favorites(user_id):  # returns user favorites
-    user_id = get_user_id(user_id)
-    try:
-        url = "https://www.royalroad.com/profile/" + str(user_id) + "/favorites"
-        favorites = get_fictions_from_url(url)
-        return favorites
-    except:
-        print("Invalid User ID/Name Input (or profile).")
-
-
-def get_fictions_from_url(url):
-    soup = request_soup(url)
+def get_fictions_from_url(url: str, client: httpclient.AsyncHTTPClient):
+    soup = request_soup(url, client)
     try:
         pages = int(
             soup.find("ul", attrs={"class": "pagination"})
@@ -336,7 +151,7 @@ def get_fictions_from_url(url):
         for i in range(2, pages + 1):
             url_page = str(url) + "?page=" + str(i)
             print(url_page)
-            soup = request_soup(url_page)
+            soup = request_soup(url_page, client)
             fictions = extract_fictions_from_url(soup, fictions)
     return fictions
 
@@ -359,11 +174,11 @@ def extract_fictions_from_url(soup, fictions):
     return fictions
 
 
-def get_user_posts(user_id):  # returns all user posts
+def get_user_posts(user_id: int, client: httpclient.AsyncHTTPClient):
     user_id = get_user_id(user_id)
     try:
         url = "https://www.royalroad.com/profile/" + str(user_id) + "/posts"
-        soup = request_soup(url)
+        soup = request_soup(url, client)
         try:
             pages = int(
                 soup.find("ul", attrs={"class": "pagination"})
@@ -379,7 +194,7 @@ def get_user_posts(user_id):  # returns all user posts
             for i in range(2, pages + 1):
                 url_page = str(url) + "?page=" + str(i)
                 print(url_page)
-                soup = request_soup(url_page)
+                soup = request_soup(url_page, client)
                 posts = get_user_posts_data(soup, posts)
         return posts
     except:
@@ -493,8 +308,10 @@ def get_user_reviews_data(soup, reviews):
     return reviews
 
 
-def get_user_threads(user_id):  # returns threads made by the user
-    user_id = get_user_id(user_id)
+def get_user_threads(user_name: str):  # returns threads made by the user
+    user_id = get_user_id(user_name)
+    assert user_id is not None
+
     try:
         url = "https://www.royalroad.com/profile/" + str(user_id) + "/threads"
         soup = request_soup(url)
@@ -521,74 +338,17 @@ def get_user_threads(user_id):  # returns threads made by the user
         print("Invalid User ID/Name Input (or profile).")
 
 
-def get_user_threads_data(soup, threads):
-    thread_listings = soup.find("li", attrs={"class": "forum-bg"}).findAll(
-        "li", attrs={"class": "sticky"}
-    )
-    for thread_div in thread_listings:
-        thread_content = thread_div.find(
-            "div", attrs={"class": "topic-description-inner"}
-        )
-        time_data = thread_div.find(
-            "div", attrs={"class": "topic-description-inner"}
-        ).find("time")
-        last_post_data = thread_div.find("div", attrs={"class": "topic-recent"})
-        last_post_time_data = thread_div.find(
-            "div", attrs={"class": "topic-recent"}
-        ).find("time")
-        link = thread_content.find("h4").find("a").get("href").strip()
-        thread_id = link.split("/")[-1]
-        title = thread_content.find("h4").text.strip()
-        replies = (
-            thread_div.find("span", attrs={"class": "topic-replies"})
-            .text.strip()
-            .split()[0]
-            .replace(",", "")
-        )
-        views = (
-            thread_div.find("span", attrs={"class": "topic-views"})
-            .text.strip()
-            .split()[0]
-            .replace(",", "")
-        )
-        time = [time_data.text.strip(), time_data.get("unixtime").strip()]
-        last_post_user_id = last_post_data.find("a").get("href").split("/")[-1].strip()
-        last_post_user_name = last_post_data.find("a").text.strip()
-
-        last_post_time = [
-            last_post_time_data.text.strip(),
-            last_post_time_data.get("unixtime").strip(),
-        ]
-
-        last_post = [last_post_user_id, last_post_user_name, last_post_time]
-
-        threads.append([thread_id, link, title, replies, views, time, last_post])
-    return threads
-
-
-def get_user_id(user_name):  # returns a user's id
+def get_user_id(user_name: str, client: httpclient.AsyncHTTPClient) -> Optional[int]:
+    search_term = user_name.replace(" ", "+")
+    url = "https://www.royalroad.com/user/memberlist?q=" + str(search_term)
+    print(url)
+    soup = request_soup(url, client)
     try:
-        int(user_name)  # check if the input value is a user_id and not a user_name
-        user_id = user_name  # it was a user_id
-    except:  # it was probably a user_name
-        search_term = user_name.replace(" ", "+")  # replace spaces with plus signs
-        url = "https://www.royalroad.com/user/memberlist?q=" + str(
-            search_term
-        )  # construct the url
-        print(url)  # print the search url for debug or console purposes
-        soup = request_soup(url)
-        try:
-            user_id = int(
-                soup.find("tbody")
-                .find("tr")
-                .find("td")
-                .find("a")
-                .get("href")
-                .split("/")[2]
-            )  # attempt to gather the first user id
-        except:  # there was no user with that id or the html is incorrect
-            return None  # return none
-    return user_id  # return the user id
+        user_id = int(
+            soup.find("tbody").find("tr").find("td").find("a").get("href").split("/")[2]
+        )
+    except:
+        return None
 
 
 def find_latest_fiction_id():  # find the latest fictiond id
@@ -600,20 +360,6 @@ def find_latest_fiction_id():  # find the latest fictiond id
         .split("/")[2]
     )  # search the html for the latest fiction id
     return latest_fiction_id  # return the latest fiction id
-
-
-def get_chapter_range(start_chapter: int, end_chapter: int) -> Tuple[int, int, int]:
-    assert start_chapter >= 0
-    assert end_chapter >= start_chapter
-
-    epub_index_start = start_chapter
-    start_chapter -= 1
-
-    return (
-        start_chapter,
-        end_chapter,
-        epub_index_start,
-    )
 
 
 def chapter_range_string_expressions(
@@ -679,109 +425,12 @@ def search_fiction(search_term):  # search royalroad for a fiction using a given
     return fiction_id  # return the fiction id
 
 
-def get_fiction_location(
-    fiction_id, directory="Fictions/", start_chapter="first", end_chapter="last"
-):  # without downloading the fiction, determine where it would be stored exactly
-    try:
-        int(fiction_id)  # check if fiction_id is a fiction id
-    except:  # it isn't
-        search_term = fiction_id  # declare search_term
-        fiction_id = search_fiction(
-            search_term
-        )  # perform a search and return the most likely fiction_id
-    fiction_object = get_fiction_object(fiction_id)  # collect the fiction page html
-    get_fiction_info(
-        fiction_object
-    )  # collect the data from the fiction page and store it in global variables
-    start_chapter, end_chapter, epub_index_start = get_chapter_range(
-        start_chapter, end_chapter
-    )  # validate and return a chapter range
-    chapter_links_approved = chapter_links[
-        start_chapter:end_chapter
-    ]  # trim off excess chapters outside the range from the queue
-    downloading_chapter_amount = len(
-        chapter_links_approved
-    )  # get the amount of chapters being downloaded
-    chapter_amount = len(chapter_links)  # get the total amount of chapters
-    if chapter_links_approved != []:  # if there are chapters queued
-        (
-            start_chapter,
-            end_chapter,
-            epub_index_start,
-            chapter_amount,
-            downloading_chapter_amount,
-            file_name_chapter_range,
-            plural,
-        ) = chapter_range_string_expressions(
-            start_chapter,
-            end_chapter,
-            epub_index_start,
-            chapter_amount,
-            downloading_chapter_amount,
-        )  # update all the values
-    else:
-        file_name_chapter_range = ""  # set the variable as empty
-    try:
-        final_location = determine_file_location(
-            title, directory, author, file_name_chapter_range, fiction_id
-        )  # finally collate all the information into a final location
-    except:
-        final_location = None  # it failed so equate to none
-    return final_location  # return the final location
+async def get_fiction_object(
+    fiction_id: int, client: httpclient.AsyncHTTPClient
+) -> BeautifulSoup:
 
-
-def determine_file_location(
-    title, directory, author, file_name_chapter_range, fiction_id
-):
-    title = re.sub(
-        r'[\\/*?:"<>|]', "", re.sub(r"[<>]", "", title)
-    ).strip()  # prevent breaking the xhtml because of html characters
-    try:
-        if author[-1] == "?":  # if the questionmark is the last character
-            author = author.replace(
-                "?", "qstnmrk"
-            )  # prevent an empty name when the ? are removed if they are the last character
-    except:
-        author = "Unknown"  # the name is probably empty
-    author = re.sub(r'[\\/*?:"<>|]', "", author).strip()  # remove invalid characters
-    try:
-        if author[-1] == ".":  # if the period is the last character
-            author = author.replace(
-                ".", "dot"
-            ).strip()  # replace all periods if they are the last character to prevent extension issues
-    except:
-        author = "Unknown"  # the name is probably empty
-    title = title.strip()
-    author = author.strip()
-    final_location = (
-        directory
-        + str(fiction_id)
-        + " - "
-        + title
-        + " - "
-        + author
-        + file_name_chapter_range
-        + ".epub"
-    )  # collact all previous information
-    return final_location  # return the final location
-
-
-def get_fiction_object(fiction_id: int) -> BeautifulSoup:
-    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount
-    (
-        url,
-        title,
-        cover_image,
-        author,
-        description,
-        genres,
-        ratings,
-        stats,
-        chapter_links,
-        chapter_amount,
-    ) = [None for i in range(10)]
     url = "https://www.royalroad.com/fiction/" + str(fiction_id)
-    soup = request_soup(url)
+    soup = await request_soup(url, client)
     assert soup is not None
 
     active = check_active_fiction(soup, fiction_id)
@@ -790,21 +439,17 @@ def get_fiction_object(fiction_id: int) -> BeautifulSoup:
     return soup
 
 
-def request_soup(url: str) -> Optional[BeautifulSoup]:
-    try:
-        http_client = httpclient.HTTPClient()
-        html = http_client.fetch(url).body.decode("utf-8")
-        soup = BeautifulSoup(html, "lxml")
-        if soup.find(has_cloud_flare_data):
-            soup = decode_email_content(soup)
-        return soup
-    except httpclient.HTTPError as e:
-        if e.code != 404:
-            return request_soup(url)
-        return None
+async def request_soup(
+    url: str, http_client: httpclient.AsyncHTTPClient
+) -> BeautifulSoup:
+    resp = http_client.fetch(url)
+    html = await resp
+
+    return BeautifulSoup(html.body.decode("utf-8"), "lxml")
 
 
 class fic:
+    fic_id: int
     url: str
     title: str
     cover_image: str
@@ -815,12 +460,51 @@ class fic:
     stats: Dict[str, str]
     chapter_links: List[str]
     num_chapters: int
+    chapter_contents: Dict[int, str]
+    chapter_titles: Dict[int, str]
 
     _fic_page_soup: BeautifulSoup
 
-    def __init__(self, fiction_id) -> None:
-        self._fic_page_soup = get_fiction_object(fiction_id)
-        self._get_fiction_info()
+    async def get_chapters(
+        self,
+        http_client: httpclient.AsyncHTTPClient,
+        chapter_indexes: List[int],
+    ):
+
+        chapter_futures: List[Future[HTTPResponse]] = []
+        for i in chapter_indexes:
+            chapter_id = self.chapter_links[i]
+            url = "https://www.royalroad.com" + str(chapter_id)
+            print(url)
+            chapter_futures.append(
+                (
+                    i,
+                    http_client.fetch(
+                        url.strip(),
+                        True,
+                        method="GET",
+                        connect_timeout=10000,
+                        request_timeout=10000,
+                    ),
+                )
+            )
+
+        for i, chap in chapter_futures:
+            resp = await chap
+            content, title = handle_chapter_response(resp)
+            self.chapter_contents[i] = content
+            self.chapter_titles[i] = title
+
+        await save_to_hdd(http_client, self, directory)
+
+    def __init__(self, fiction_id: int) -> None:
+        self.fic_id = fiction_id
+        self.chapter_contents = {}
+        self.chapter_titles = {}
+
+    async def initialize(self, client: httpclient.AsyncHTTPClient) -> None:
+        self._fic_page_soup = await get_fiction_object(self.fic_id, client)
+        self._extract_fiction_info()
 
     @staticmethod
     def _get_fiction_cover_image(soup: BeautifulSoup) -> str:
@@ -856,11 +540,9 @@ class fic:
 
         return author
 
-    def _get_fiction_info(self):
+    def _extract_fiction_info(self) -> None:
         assert self._fic_page_soup is not None
         fiction_obj = self._fic_page_soup
-
-        global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount
 
         fiction_id = get_fiction_id(fiction_obj)
         print(fiction_id)
@@ -875,18 +557,6 @@ class fic:
         self.stats = get_fiction_statistics(fiction_obj)
         self.chapter_links = get_chapter_links(fiction_obj)
         self.num_chapters = len(self.chapter_links)
-        return (
-            self.url,
-            self.title,
-            self.cover_image,
-            self.author,
-            self.description,
-            self.genres,
-            self.ratings,
-            self.stats,
-            self.chapter_links,
-            self.num_chapters,
-        )
 
 
 def get_fiction_id(fic_page_soup: BeautifulSoup) -> int:
@@ -966,7 +636,7 @@ def get_fiction_statistics(soup) -> Dict[str, str]:
     return stats  # return stats
 
 
-def get_chapter_links(soup) -> List[str]:
+def get_chapter_links(soup: BeautifulSoup) -> List[str]:
     chapter_links = [
         tag.get("data-url")
         for tag in soup.findAll("tr", attrs={"style": "cursor: pointer"})
@@ -974,44 +644,14 @@ def get_chapter_links(soup) -> List[str]:
     return chapter_links
 
 
-def get_chapter_amount(soup):  # get chapter amount
+async def get_chapter_amount(soup: BeautifulSoup):
     chapter_amount = len(
-        get_chapter_links(soup)
+        await get_chapter_links(soup)
     )  # get chapter links and then find the len of the list
     return chapter_amount  # return chapter amount
 
 
-async def get_chapters(chapter_links: List[str], directory_loc: str):
-    global chapters_downloaded, chapters_html, fiction_html, directory, http_client
-    globals()["directory"] = directory_loc
-    chapters_downloaded = []
-    chapters_html = {}
-    fiction_html = ""
-    http_client = httpclient.AsyncHTTPClient(force_instance=True, max_clients=100)
-    chapter_futures: List[Future[HTTPResponse]] = []
-    for chapter_id in chapter_links:
-        global i
-        i += 1
-        url = "https://www.royalroad.com" + str(chapter_id)
-        print(url)
-        chapter_futures.append(
-            http_client.fetch(
-                url.strip(),
-                True,
-                method="GET",
-                connect_timeout=10000,
-                request_timeout=10000,
-            )
-        )
-
-    for chap in chapter_futures:
-        resp = await chap
-        handle_chapter_response(resp)
-
-    save_to_hdd(fiction_html, chapters_html, chapters_downloaded, directory)
-
-
-def get_chapter_content(html):  # get the chapter html from the chapter page
+def get_chapter_content_title(html) -> Tuple[str, str]:
     soup = BeautifulSoup(html, "lxml")  # create a soup object
     chapter_title = soup.find(
         "h1", attrs={"style": "margin-top: 10px", "class": "font-white"}
@@ -1019,54 +659,46 @@ def get_chapter_content(html):  # get the chapter html from the chapter page
     if chapter_title.find(has_cloud_flare_data):
         chapter_title = decode_email_content(chapter_title)
     chapter_title = chapter_title.text.strip()
-    content_html = soup.find(
-        "div", attrs={"class": "chapter-inner chapter-content"}
-    )  # extract the chapter html and convert it to a str to prevent type errors
+    content_html = soup.find("div", attrs={"class": "chapter-inner chapter-content"})
     if content_html.find(has_cloud_flare_data):
         content_html = decode_email_content(content_html)
     content_html = str(content_html)
-    return content_html, chapter_title  # return the chapter html and chapter title
+    return content_html, chapter_title
 
 
-def save_to_hdd(
-    fiction_html, chapters_html, chapters_downloaded, directory="Fictions/"
+async def save_to_hdd(
+    client: httpclient.AsyncHTTPClient,
+    my_fic: fic,
+    directory: str = "Fictions/",
 ):
-    global url, title, cover_image, author, description, genres, ratings, stats, chapter_links, chapter_amount, epub_index_start, file_name_chapter_range, plural
     time = datetime.now().strftime("%Y-%m-%d %H:%M")
     genre_html = ""
-    for genre in genres:
-        if genre_html == "":
-            genre_html += genre
-        else:
-            genre_html += " | " + genre
+    # for genre in genres:
+    #     if genre_html == "":
+    #         genre_html += genre
+    #     else:
+    #         genre_html += " | " + genre
+
+    plural = "asf34"
+    file_name_chapter_range = "qwer"
+    chapter_amount = "zxcv"
+    chapter_range_text = "lo9i"
+
     if file_name_chapter_range != "":
-        chapter_range_text = f"{plural} {file_name_chapter_range}"  # specify the chapters contained in the epub
-    elif chapter_amount != 1:  # else
-        chapter_range_text = (
-            f"{plural} 1-{chapter_amount}"  # add it to the start of the epub info
-        )
+        chapter_range_text = f"{plural} {file_name_chapter_range}"
+    elif chapter_amount != 1:
+        chapter_range_text = f"{plural} 1-{chapter_amount}"
     else:
-        chapter_range_text = (
-            f"{plural} 1"  # specify that there is only a single chapter in the fiction
-        )
+        chapter_range_text = f"{plural} 1"
     chapter_range_html = f"<h2>Chapter{chapter_range_text}</h2>"
     # maybe use &gt; amd &lt; in the title and author internal
-    title_clean = re.sub(
-        r'[\\/*"<>]', "", title
-    ).strip()  # these are fine for inside the epub
-    author_clean = re.sub(
-        r'[\\/*"<>]', "", author
-    ).strip()  # these are fine for inside the epub
-    title_folder = re.sub(
-        r"[?:|]", "", title_clean
-    ).strip()  # clean the title for windows and other systems
-    try:
-        if author[-1] == "?":  # check for a question mark as the last character
-            author = author.replace(
-                "?", "qstnmrk"
-            )  # if so, replace it with 'qstnmrk' to prevent empty author names
-    except:
-        author = "Unknown"  # the name is likely empty and is replaced with 'Unknown'
+    title_clean = my_fic.title
+    author_clean = my_fic.author
+    title_folder = title_clean
+
+    if my_fic.author[-1] == "?":
+        author = my_fic.author.replace("?", "qstnmrk")
+
     author_folder = re.sub(r"[?:|]", "", author_clean).strip()  # clean the author
     try:
         if author_clean[-1] == ".":  # check the clean author for a dot
@@ -1079,42 +711,42 @@ def save_to_hdd(
         )
     title_internal = title_folder.replace("&", "&amp;").strip()
     author_internal = author_folder.replace("&", "&amp;").strip()
-    stats_html = (
-        "<p><b>Total Views:</b> "
-        + stats[0]
-        + "<b> | Average Views:</b> "
-        + stats[1]
-        + "<b> | Followers:</b> "
-        + stats[2]
-        + "<b> | Favorites:</b> "
-        + stats[3]
-        + "<b> | Pages:</b> "
-        + stats[5]
-        + "</p>"
-    )  # format the stats into html
-    statistics = (
-        "<p><b>Chapters:</b> "
-        + str(chapter_amount)
-        + "<b> | Overall Score:</b> "
-        + ratings[0]
-        + "<b> | Best Score:</b> "
-        + ratings[1]
-        + "<b> | Ratings:</b> "
-        + ratings[2]
-        + "</p><p><b>Style Score:</b> "
-        + ratings[3]
-        + "<b> | Story Score:</b> "
-        + ratings[4]
-        + "<b> | Character Score:</b> "
-        + ratings[5]
-        + "<b> | Grammar Score:</b> "
-        + ratings[6]
-        + "</p>"
-        + stats_html
-    )  # format for info into html
+    # stats_html = (
+    #     "<p><b>Total Views:</b> "
+    #     + stats[0]
+    #     + "<b> | Average Views:</b> "
+    #     + stats[1]
+    #     + "<b> | Followers:</b> "
+    #     + stats[2]
+    #     + "<b> | Favorites:</b> "
+    #     + stats[3]
+    #     + "<b> | Pages:</b> "
+    #     + stats[5]
+    #     + "</p>"
+    # )  # format the stats into html
+    # statistics = (
+    #     "<p><b>Chapters:</b> "
+    #     + str(chapter_amount)
+    #     + "<b> | Overall Score:</b> "
+    #     + ratings[0]
+    #     + "<b> | Best Score:</b> "
+    #     + ratings[1]
+    #     + "<b> | Ratings:</b> "
+    #     + ratings[2]
+    #     + "</p><p><b>Style Score:</b> "
+    #     + ratings[3]
+    #     + "<b> | Story Score:</b> "
+    #     + ratings[4]
+    #     + "<b> | Character Score:</b> "
+    #     + ratings[5]
+    #     + "<b> | Grammar Score:</b> "
+    #     + ratings[6]
+    #     + "</p>"
+    #     + stats_html
+    # )  # format for info into html
     data = (
         "<div style='text-align: center'><img src='../cover.jpg' alt='Cover Image' style='display: block; margin-left: auto; margin-right: auto;' /><h1>\"<a href='"
-        + url
+        + my_fic.url
         + "'>"
         + str(title_internal)
         + '</a>" by "'
@@ -1124,14 +756,14 @@ def save_to_hdd(
         + "<p><b>"
         + genre_html
         + "</b></p>"
-        + statistics
+        # + statistics
         + "<h2>Last updated: "
         + time
         + "</h2></div><h3>Description:</h3><p>"
-        + str(description)
+        + str(my_fic.description)
         + "</p>"
     )  # add the last few pieces of info to the html
-    fiction_id = url.split("/")[-1].strip()
+    fiction_id = my_fic.url.split("/")[-1].strip()
     print(
         "Saving EPUB: "
         + directory
@@ -1437,75 +1069,25 @@ padding:5px;
         )
     output_location = directory  # declare the output location
     folder_location = directory + folder_name  # declare the folder location
-    obtain_and_save_image(
-        folder_location, cover_image
-    )  # either decode the base64 image or download the image from the external image address and save it
-    compress_and_convert_to_epub(
-        directory, folder_location, output_location
-    )  # compress and covert the epub from the local archive that was created and then remove the archive and folder
+    await obtain_and_save_image(client, folder_location, my_fic.cover_image)
+    compress_and_convert_to_epub(directory, folder_location, output_location)
 
 
-def obtain_and_save_image(
-    directory, cover_image
-):  # decode the base64 image or download the image and then save it
-    if (
-        (cover_image.split(",")[0] != "data:image/jpeg;base64")
-        and (cover_image.split(",")[0] != "data:image/gif;base64")
-        and (cover_image.split(",")[0] != "data:image/png;base64")
-    ):  # if the image is not base64 encoded
-        if (
-            cover_image == "http://www.royalroad.com/Content/Images/nocover-new-min.png"
-        ):  # don't download the default image to save data
-            try:
-                with open("nocover.jpg", "rb") as nocover:
-                    image_data = nocover.read()
-            except:
-                image_data = download_image_data(
-                    "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
-                )
-        else:
-            image_data = download_image_data(cover_image)  # download the image
-        if image_data == None:  # if the image is empty
-            image_data = download_image_data(
-                "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
-            )  # download the default image instead
-    else:  # else decode the image if it is base64 encoded
-        try:
-            image_data = base64.b64decode(image_data)  # decode the image
-        except:
-            image_data = download_image_data(
-                "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
-            )  # download the default image if the decode fails
-    try:
-        with open(
-            directory + "cover.jpg", "wb"
-        ) as cover_image_file:  # write the image data to the local location in bytes
-            cover_image_file.write(image_data)
-    except:
-        image_data = download_image_data(
-            "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
-        )  # download the default image if the decode fails
-        with open(
-            directory + "cover.jpg", "wb"
-        ) as cover_image_file:  # write the image data to the local location in bytes
-            cover_image_file.write(image_data)
+async def obtain_and_save_image(cli, directory, cover_image):
+
+    image_data = await download_image_data(
+        cli, "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
+    )
+
+    with open(directory + "cover.jpg", "wb") as cover_image_file:
+        cover_image_file.write(image_data)
 
 
-def download_image_data(cover_image):  # download the image data
-    try:
-        http_client_image = httpclient.HTTPClient()  # initiate the http request
-        image_data = http_client_image.fetch(
-            cover_image, headers=headers
-        ).body  # collect the body from the response
-        return image_data  # return the image data
-    except httpclient.HTTPError:  # if a http error occurs
-        try:
-            if e.code != 404:  # and it's not a 404, retry the download
-                download_image_data(cover_image)
-        except:
-            download_image_data(
-                "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
-            )  # else download the default image
+async def download_image_data(cli: httpclient.AsyncHTTPClient, cover_image):
+    resp = await cli.fetch(cover_image)
+    assert resp.code == 200, cover_image
+
+    return resp.body
 
 
 def compress_and_convert_to_epub(
@@ -1527,10 +1109,8 @@ def compress_and_convert_to_epub(
     )  # add the prepared epub contents to the zip file
     zip_file_epub.close()  # close the zipfile
     remove_dir(folder_location)  # delete the directory used to make the zipfile
-    try:  # to prevent file exists error, fails if file is open
-        os.remove(
-            output_location + ".epub"
-        )  # remove any epubs that already exist with the name of the current epub
+    try:
+        os.remove(output_location + ".epub")
     except:
         pass
     try:
@@ -1574,15 +1154,6 @@ def addFolderToZip(
             addFolderToZip(zip_file_epub, full_path)  # add that folder to the zip too
 
 
-def decode_email_content(soup):
-    emails = soup.find_all(has_cloud_flare_data)
-    for email_protected in emails:
-        data = email_protected.get("data-cfemail")
-        email = decode_email(data)
-        email_protected.replaceWith(email)
-    return soup
-
-
 def decode_email(data_string):
     email = ""
     r = int(data_string[:2], 16)
@@ -1622,71 +1193,14 @@ def cloud_flare_bypass():
     return headers
 
 
-def handle_chapter_response(response):
-    global i, chapters_downloaded, chapters_html, fiction_html, directory, http_client  # access global variables
-    if response.code == 599:  # if the request failed (timeout or 404)
-        print(response.effective_url, "error")  # print an error to the console
-        http_client.fetch(
-            response.effective_url.strip(),
-            handle_chapter_response,
-            method="GET",
-            connect_timeout=10,
-            request_timeout=10,
-            headers=headers,
-        )  # add the failed url to the loop and give it a 10 second timeout
-    else:
-        html = response.body.decode("utf-8")  # decode the response html
-        url = response.effective_url  # clarify the url of the response
-        if (
-            "Could not find host | www.royalroad.com | Cloudflare".lower()
-            in html.lower()
-        ):  # if the page is incorrect and actually a cloudflare auto flag
-            print(
-                "Cloudflare Problem! Retrying"
-            )  # alert the console that cloudflare is interfering
-            http_client.fetch(
-                response.effective_url.strip(),
-                handle_chapter_response,
-                method="GET",
-                connect_timeout=10,
-                request_timeout=10,
-                headers=headers,
-            )  # retry the chapter request with a 10 second timeout
-        else:  # if the page is not cloudflare
-            try:
-                chapter_id = int(url.split("/")[-2])  # get the chapter id from the url
-            except:
-                chapter_id = int(
-                    url.split("?")[0].split("/")[-1]
-                )  # the chapter id is presented weirdly occasionally and as such this is the other method to get the chapter id from the url
-            try:
-                chapters_downloaded.append(
-                    chapter_id
-                )  # append the chapter id to the chapters_downloaded list
-                html = get_chapter_content(
-                    html
-                )  # get the html content of the chapter from the page
-                chapters_html[
-                    chapter_id
-                ] = html  # set the chapter id value in the chapters_html dictionary to the chapter html
-                i -= 1  # subtract 1 from the remaining chapter links
-                if i == 0:  # if all the chapters are downloaded for the fiction
-                    chapters_downloaded.sort(
-                        key=int
-                    )  # sort the chapter ids so the fiction is in chronological order (very important)
-                    chp = 0  # declare chp as 0
-                    for chp_id in chapters_downloaded:  # for each chp id downloaded
-                        chp += 1  # add one to chp count
-                        # fiction_html = fiction_html + "<div style='text-align: center'><h1 style='margin-top: 10px' class='font-white'>(" + str(chp) + ") " + chapters_html[chp_id][1] + "</div></h1>" + chapters_html[chp_id][0] #and append the entire chapter html to the rest of the story
-                    ioloop.IOLoop.instance().stop()  # stop the ioloop and then progress to the save_to_hdd function
+def handle_chapter_response(response: HTTPResponse) -> Tuple[str, str]:
+    assert response.code == 200
 
-            except:  # something went wrong, probably empty response, retry
-                cloud_flare_bypass()
-                http_client.fetch(
-                    response.effective_url.strip(),
-                    handle_chapter_response,
-                    method="GET",
-                    connect_timeout=10,
-                    request_timeout=10,
-                    headers=headers,
-                )
+    html = response.body.decode("utf-8")
+
+    assert (
+        "Could not find host | www.royalroad.com | Cloudflare".lower()
+        not in html.lower()
+    )
+
+    return get_chapter_content_title(html)
