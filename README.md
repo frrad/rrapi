@@ -1,3 +1,5 @@
+forked from [https://github.com/EL-S/RoyalRoadAPI](https://github.com/EL-S/RoyalRoadAPI)
+
 # RoyalRoadLAPI
 A Python API to request and send data with the fanfiction website RoyalRoadL
 
