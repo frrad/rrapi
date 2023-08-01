@@ -1073,20 +1073,19 @@ padding:5px;
     compress_and_convert_to_epub(directory, folder_location, output_location)
 
 
-async def obtain_and_save_image(cli, directory, cover_image):
-
-    image_data = await download_image_data(
-        cli, "http://www.royalroad.com/Content/Images/rr-placeholder.jpg"
-    )
+async def obtain_and_save_image(cli, directory, cover_image_url):
+    image_data = await download_image_data(cli, cover_image_url)
 
     with open(directory + "cover.jpg", "wb") as cover_image_file:
         cover_image_file.write(image_data)
 
 
 async def download_image_data(cli: httpclient.AsyncHTTPClient, cover_image):
-    resp = await cli.fetch(cover_image)
+    resp = await cli.fetch(
+        cover_image,
+        raise_error=False,
+    )
     assert resp.code == 200, cover_image
-
     return resp.body
 
 
