@@ -673,25 +673,23 @@ async def save_to_hdd(
 ):
     time = datetime.now().strftime("%Y-%m-%d %H:%M")
     genre_html = ""
-    # for genre in genres:
-    #     if genre_html == "":
-    #         genre_html += genre
-    #     else:
-    #         genre_html += " | " + genre
+    for genre in my_fic.genres:
+        if genre_html == "":
+            genre_html += genre
+        else:
+            genre_html += " | " + genre
 
-    plural = "asf34"
-    file_name_chapter_range = "qwer"
-    chapter_amount = "zxcv"
-    chapter_range_text = "lo9i"
+    num_downloaded = len(my_fic.chapter_contents)
+    first_downloaded = min(my_fic.chapter_contents.keys())
+    last_downloaded = max(my_fic.chapter_contents.keys())
 
-    if file_name_chapter_range != "":
-        chapter_range_text = f"{plural} {file_name_chapter_range}"
-    elif chapter_amount != 1:
-        chapter_range_text = f"{plural} 1-{chapter_amount}"
-    else:
-        chapter_range_text = f"{plural} 1"
+    plural = "s" if num_downloaded > 1 else ""
+    file_name_chapter_range = f"{first_downloaded + 1} - {last_downloaded + 1}"
+
+    chapter_range_text = f"{plural} {file_name_chapter_range}"
+
     chapter_range_html = f"<h2>Chapter{chapter_range_text}</h2>"
-    # maybe use &gt; amd &lt; in the title and author internal
+
     title_clean = my_fic.title
     author_clean = my_fic.author
     title_folder = title_clean
@@ -699,16 +697,12 @@ async def save_to_hdd(
     if my_fic.author[-1] == "?":
         author = my_fic.author.replace("?", "qstnmrk")
 
-    author_folder = re.sub(r"[?:|]", "", author_clean).strip()  # clean the author
+    author_folder = re.sub(r"[?:|]", "", author_clean).strip()
     try:
-        if author_clean[-1] == ".":  # check the clean author for a dot
-            author_clean = author_clean.replace(
-                ".", "dot"
-            )  # if so, replace it as it might cause extension problems, or windows might remove it because of having 2 or more periods in a row
+        if author_clean[-1] == ".":
+            author_clean = author_clean.replace(".", "dot")
     except:
-        author_clean = (
-            "Unknown"  # the author_clean is likely empty so replace it with 'Unknown'
-        )
+        author_clean = "Unknown"
     title_internal = title_folder.replace("&", "&amp;").strip()
     author_internal = author_folder.replace("&", "&amp;").strip()
     # stats_html = (
@@ -1089,51 +1083,31 @@ async def download_image_data(cli: httpclient.AsyncHTTPClient, cover_image):
     return resp.body
 
 
-def compress_and_convert_to_epub(
-    directory, folder_location, output_location
-):  # compress and convert the file to epub
-    global final_location  # access global variables
-    new_zip_name = folder_location.split("/")[
-        -2
-    ]  # create a zip name based on the current folder name
-    output_location = (
-        directory + new_zip_name
-    )  # declare the output location of the archive function
-    zip_file_epub = zipfile.ZipFile(output_location + ".zip", "w")  # create a zipfile
-    zip_file_epub.writestr(
-        "mimetype", "application/epub+zip"
-    )  # write a mimetype file as the FIRST FILE in the zip, this is critical to the function of an epub as it is the only method of identifying it (must be the first file)
-    addFolderToZip(
-        zip_file_epub, folder_location
-    )  # add the prepared epub contents to the zip file
-    zip_file_epub.close()  # close the zipfile
-    remove_dir(folder_location)  # delete the directory used to make the zipfile
-    try:
-        os.remove(output_location + ".epub")
-    except:
-        pass
-    try:
-        os.rename(
-            output_location + ".zip", output_location + ".epub"
-        )  # rename the epub zip to be an epub file
-    except Exception as e:  # the rename failed (the last step)
-        print(
-            output_location, "Error", e
-        )  # the file likely already exists and as such the old one must be manually remove and then the zip file needs to be renamed manually
-    final_location = (
-        output_location + ".epub"
-    )  # declare the final location of the epub file
-    print(
-        "Saved EPUB:", final_location
-    )  # print the saved location of the epub to the console
+def compress_and_convert_to_epub(directory, folder_location, output_location):
+    new_zip_name = folder_location.split("/")[-2]
+    output_location = directory + new_zip_name
+    zip_file_epub = zipfile.ZipFile(output_location + ".zip", "w")
+    zip_file_epub.writestr("mimetype", "application/epub+zip")
+    addFolderToZip(zip_file_epub, folder_location)
+    zip_file_epub.close()
+    remove_dir(folder_location)
+
+    final_location = output_location + ".epub"
+
+    if os.path.exists(final_location):
+        os.remove(final_location)
+
+    os.rename(output_location + ".zip", output_location + ".epub")
+
+    print("Saved EPUB:", final_location)
 
 
-def remove_dir(folder_location):  # remove a dir
+def remove_dir(folder_location):
     try:
-        rmtree(folder_location)  # remove all nested directories
+        rmtree(folder_location)
     except:
-        os.listdir(folder_location)  # if that fails list the directory, maybe useless?
-        remove_dir(folder_location)  # remove the directory
+        os.listdir(folder_location)
+        remove_dir(folder_location)
 
 
 def addFolderToZip(
